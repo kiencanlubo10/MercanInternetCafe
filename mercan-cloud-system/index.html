@@ -45,6 +45,7 @@ body.read-only .actions button,body.read-only form button[type="submit"],body.re
   <button data-page="employees"><span>♙</span>Employees</button>
   <button data-page="payroll"><span>₱</span>Salary & Payouts</button>
   <button data-page="advances" id="navAdvances" style="display:none"><span>⇄</span>Advances & Deductions</button>
+  <button data-page="payruns" id="navPayruns" style="display:none"><span>✓</span>Payroll Runs</button>
   <button data-page="reports"><span>▥</span>Reports</button>
   <button data-page="settings"><span>⚙</span>Settings & Backup</button>
  </nav>
@@ -112,6 +113,35 @@ body.read-only .actions button,body.read-only form button[type="submit"],body.re
    <div class="note">The expected salary amount is not assumed or auto-paid. Enter the actual amount paid. Unpaid estimates use each employee's editable monthly salary as a reference, split into two equal payout targets.</div>
    </div>
    <div class="grid two" style="margin-top:16px"><div class="card"><h3 class="section-title">Payout period summary</h3><div class="toolbar no-print"><div class="field"><label>Salary month</label><input type="month" id="paySummaryMonth"></div><button class="secondary" onclick="renderPayroll()">Apply</button></div><div id="payrollSummary" style="margin-top:12px"></div></div><div class="card"><h3 class="section-title">Salary payment records</h3><div id="payrollTable"></div></div></div>
+  </section>
+  <section id="page-payruns" class="page hidden">
+   <div class="page-head"><div><h2>Payroll runs</h2><p>Process each employee's 15th or 30th payout. Basic pay, commission and approved deductions are calculated by the database and frozen when you process. Corrections are added afterward as adjustments.</p></div></div>
+   <div id="prNotice" class="note hidden" style="margin-bottom:12px"></div>
+   <div id="prSetup" class="note hidden" style="margin-bottom:12px"></div>
+   <div class="card"><h3 class="section-title">Process a payout</h3>
+    <div class="form-grid">
+     <div class="field"><label for="prEmp">Employee</label><select id="prEmp"></select></div>
+     <div class="field"><label for="prMonth">Salary month</label><input type="month" id="prMonth"></div>
+     <div class="field"><label for="prPeriod">Payout</label><select id="prPeriod"><option value="15th">15th payout</option><option value="30th">30th payout</option></select></div>
+    </div>
+    <details style="margin:10px 0"><summary>Change the commission period (optional)</summary>
+     <div class="form-grid cols-2" style="margin-top:8px"><div class="field"><label for="prFrom">From</label><input type="date" id="prFrom"></div><div class="field"><label for="prTo">To</label><input type="date" id="prTo"></div></div>
+     <div class="note">Default: the 15th payout uses days 1–15 of the salary month; the 30th payout uses day 16 to the end of the month. Commission = net sales after bills in that period × the employee's rate.</div>
+    </details>
+    <div class="toolbar"><button type="button" id="prPreviewBtn">Preview payroll</button></div>
+    <div id="prPreview" style="margin-top:12px"></div>
+   </div>
+   <div class="card" style="margin-top:16px"><h3 class="section-title">Payout status for the salary month</h3><div id="prStatus"></div></div>
+   <div class="grid stats" id="prStats" style="margin-top:16px"></div>
+   <div class="card" style="margin-top:16px"><h3 class="section-title">Payroll history</h3>
+    <div class="toolbar no-print" style="margin-bottom:12px">
+     <div class="field"><label for="prFMonth">Salary month</label><input type="month" id="prFMonth"></div>
+     <div class="field"><label for="prFEmp">Employee</label><select id="prFEmp"><option value="">All employees</option></select></div>
+     <button type="button" class="secondary" id="prAllMonths">All months</button>
+    </div>
+    <div id="prRuns"></div>
+    <div class="note">Processed payroll cannot be edited or deleted. Use an adjustment (positive adds pay, negative reduces it) with a reason. The older "Salary &amp; Payouts" records are kept unchanged.</div>
+   </div>
   </section>
   <section id="page-advances" class="page hidden">
    <div class="page-head"><div><h2>Employee advances & salary deductions</h2><p>Record cash advances and employee expenses, approve them, then deduct them from salary. Deductions are tracked here and are never counted as sales or income.</p></div><button class="no-print" onclick="advRecord()">＋ Record advance / expense</button></div>
@@ -191,7 +221,7 @@ async function pushCloudState(){cloudSaveTimer=null;if(!cloudReady||!currentShop
 async function initializeCloudSession(session){if(!session){document.getElementById('authGate').style.display='grid';document.getElementById('mainApp').style.display='none';cloudReady=false;return}
  document.getElementById('authGate').style.display='none';document.getElementById('mainApp').style.display='grid';setCloudStatus('Preparing your shop…');
  let {data:boot,error:bootError}=await supabaseClient.rpc('bootstrap_mercanshop');if(bootError)throw bootError;
- currentShopId=boot.shop_id;currentRole=boot.role;currentUserId=session.user.id;document.getElementById('teamAccessCard').style.display=currentRole==='admin'?'block':'none';document.getElementById('navAdvances').style.display=currentRole==='admin'?'':'none';
+ currentShopId=boot.shop_id;currentRole=boot.role;currentUserId=session.user.id;document.getElementById('teamAccessCard').style.display=currentRole==='admin'?'block':'none';document.getElementById('navAdvances').style.display=currentRole==='admin'?'':'none';document.getElementById('navPayruns').style.display=currentRole==='admin'?'':'none';
  let {data:row,error}=await supabaseClient.from('shop_state').select('state,revision').eq('shop_id',currentShopId).maybeSingle();if(error)throw error;
  if(row){state={...defaultState(),...row.state,settings:{...defaultState().settings,...(row.state.settings||{})}};cloudRevision=row.revision;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}
  else {state={...defaultState(),...state,settings:{...defaultState().settings,...(state.settings||{})}};cloudRevision=0;}
@@ -207,7 +237,7 @@ document.getElementById('authForm').addEventListener('submit',async e=>{e.preven
 
 function updateBrand(){document.getElementById('brandName').textContent=state.settings.shopName||'Computer Shop';document.title=(state.settings.shopName||'Computer Shop')+' | Financial Manager'}
 function modal(title,message,onYes,yesText='Confirm'){const root=document.getElementById('modalRoot');root.innerHTML=`<div class="modal-backdrop"><div class="modal"><h3>${esc(title)}</h3><div>${message}</div><div class="modal-actions"><button class="secondary" id="modalCancel">Cancel</button><button class="danger" id="modalYes">${esc(yesText)}</button></div></div></div>`;root.querySelector('#modalCancel').onclick=()=>root.innerHTML='';root.querySelector('#modalYes').onclick=()=>{root.innerHTML='';onYes()};root.querySelector('.modal-backdrop').addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))root.innerHTML=''})}
-function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.add('hidden'));document.getElementById('page-'+page).classList.remove('hidden');document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));const titles={dashboard:'Dashboard',sales:'Daily Sales',expenses:'Bills & Expenses',employees:'Employees',payroll:'Salary & Payouts',advances:'Advances & Deductions',reports:'Financial Reports',settings:'Settings & Backup'};document.getElementById('pageTitle').textContent=titles[page];if(page==='dashboard')renderDashboard();if(page==='sales')renderSalesTable();if(page==='expenses'){renderExpenses();renderCategories()}if(page==='employees')renderEmployees();if(page==='payroll')renderPayroll();if(page==='advances')renderAdvances();if(page==='reports')renderReport();if(page==='settings')document.getElementById('shopName').value=state.settings.shopName}
+function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.add('hidden'));document.getElementById('page-'+page).classList.remove('hidden');document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));const titles={dashboard:'Dashboard',sales:'Daily Sales',expenses:'Bills & Expenses',employees:'Employees',payroll:'Salary & Payouts',advances:'Advances & Deductions',payruns:'Payroll Runs',reports:'Financial Reports',settings:'Settings & Backup'};document.getElementById('pageTitle').textContent=titles[page];if(page==='dashboard')renderDashboard();if(page==='sales')renderSalesTable();if(page==='expenses'){renderExpenses();renderCategories()}if(page==='employees')renderEmployees();if(page==='payroll')renderPayroll();if(page==='advances')renderAdvances();if(page==='payruns')renderPayruns();if(page==='reports')renderReport();if(page==='settings')document.getElementById('shopName').value=state.settings.shopName}
 document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button[data-page]');if(b)go(b.dataset.page)});
 function inRange(d,from,to){return (!from||d>=from)&&(!to||d<=to)}
 function sums(from,to){const sales=state.sales.filter(x=>inRange(x.date,from,to));const expenses=state.expenses.filter(x=>inRange(x.date,from,to));const morning=sales.reduce((a,x)=>a+Number(x.morning||0),0),night=sales.reduce((a,x)=>a+Number(x.night||0),0),gross=morning+night,bills=expenses.reduce((a,x)=>a+Number(x.amount||0),0),net=gross-bills;const commissions=state.employees.reduce((a,e)=>a+Math.max(0,net)*Number(e.rate||0)/100,0);return {morning,night,gross,bills,net,commissions,balance:net-commissions,sales,expenses}}
@@ -438,6 +468,154 @@ function advReverse(id){
   'Reverse deduction',async fd=>{
    const {data,error}=await supabaseClient.rpc('reverse_employee_deduction',{p_deduction_id:id,p_reason:fd.get('why')});
    if(error)throw error;advNotice(`Deduction reversed (${data.reference}).`);await advRefresh();
+  });
+}
+
+/* ===== Payroll runs (Priority 3) =====
+   Every figure is calculated and stored by the database functions in
+   supabase/migrations/202611030003_payroll.sql. This code only calls them. */
+const pr={registry:[],preview:null,wired:false};
+function prNotice(msg){const el=document.getElementById('prNotice');el.textContent=msg;el.classList.toggle('hidden',!msg)}
+function prFail(e){
+ const m=cleanErr(e),missing=/does not exist|schema cache|could not find|not find the function/i.test(m);
+ const box=document.getElementById('prSetup');
+ box.innerHTML=missing?'<strong>Setup needed:</strong> run <code>supabase/migrations/202611030003_payroll.sql</code> in the Supabase SQL Editor, then reload this page.':'<strong>Could not load:</strong> '+esc(m);
+ box.classList.remove('hidden');console.error(e);
+}
+async function prFlushState(){
+ // Commission is calculated from the saved cloud data, so make sure the latest edits are saved first.
+ if(cloudSaveTimer){clearTimeout(cloudSaveTimer);await pushCloudState()}
+ const st=(document.getElementById('cloudStatus')||{}).textContent||'';
+ if(/^Sync issue/.test(st))throw new Error('Your latest changes are not saved to the cloud yet, so payroll cannot be calculated. Reload the page and try again.');
+}
+const prVal=id=>document.getElementById(id).value;
+const prToday=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'});
+const prPeriodTxt=p=>p==='15th'?'15th payout':'30th payout';
+function prClearPreview(){pr.preview=null;document.getElementById('prPreview').innerHTML=''}
+function prWire(){
+ if(pr.wired)return;pr.wired=true;
+ ['prEmp','prMonth','prPeriod','prFrom','prTo'].forEach(id=>document.getElementById(id).addEventListener('change',prClearPreview));
+ document.getElementById('prMonth').addEventListener('change',()=>{const v=prVal('prMonth');if(v)document.getElementById('prFMonth').value=v;Promise.all([prLoadStatus(),prLoadRuns()]).catch(prFail)});
+ document.getElementById('prPreviewBtn').addEventListener('click',()=>prDoPreview().catch(e=>{prClearPreview();document.getElementById('prPreview').innerHTML='<div class="note" style="color:#b3303f">'+esc(cleanErr(e))+'</div>'}));
+ ['prFMonth','prFEmp'].forEach(id=>document.getElementById(id).addEventListener('change',()=>prLoadRuns().catch(prFail)));
+ document.getElementById('prAllMonths').addEventListener('click',()=>{document.getElementById('prFMonth').value='';prLoadRuns().catch(prFail)});
+}
+async function renderPayruns(){
+ prWire();
+ if(currentRole!=='admin'){prFail(new Error('Only a shop administrator can open this page.'));return}
+ document.getElementById('prSetup').classList.add('hidden');prNotice('');
+ if(!prVal('prMonth'))document.getElementById('prMonth').value=manilaMonth();
+ if(!prVal('prFMonth'))document.getElementById('prFMonth').value=manilaMonth();
+ if(!pr.periodSet){document.getElementById('prPeriod').value=manilaDay()>15?'30th':'15th';pr.periodSet=true}
+ try{
+  clearTimeout(registryTimer);
+  await syncEmployeeRegistry();
+  await prLoadRegistry();
+  await Promise.all([prLoadStatus(),prLoadRuns()]);
+ }catch(e){prFail(e)}
+}
+async function prLoadRegistry(){
+ const {data,error}=await supabaseClient.from('employee_registry').select('employee_ref,name,active,monthly_salary,commission_rate').order('name');
+ if(error)throw error;pr.registry=data||[];
+ const rows=[...pr.registry.filter(r=>r.active),...pr.registry.filter(r=>!r.active)];
+ const sel=document.getElementById('prEmp'),keep=sel.value;
+ sel.innerHTML=rows.length?rows.map(r=>`<option value="${esc(r.employee_ref)}">${esc(r.name)}${r.active?'':' (inactive)'}</option>`).join(''):'<option value="">Add employees first</option>';
+ if(keep&&rows.some(r=>r.employee_ref===keep))sel.value=keep;
+ const f=document.getElementById('prFEmp'),fk=f.value;
+ f.innerHTML='<option value="">All employees</option>'+pr.registry.map(r=>`<option value="${esc(r.employee_ref)}">${esc(r.name)}${r.active?'':' (inactive)'}</option>`).join('');f.value=fk;
+}
+async function prDoPreview(){
+ const emp=prVal('prEmp'),month=prVal('prMonth'),period=prVal('prPeriod'),from=prVal('prFrom')||null,to=prVal('prTo')||null;
+ if(!emp)throw new Error('Choose an employee first');
+ if(!month)throw new Error('Choose the salary month');
+ if(!!from!==!!to)throw new Error('Enter both commission dates, or leave both empty');
+ await prFlushState();
+ const {data,error}=await supabaseClient.rpc('preview_payroll',{p_employee_ref:emp,p_salary_month:month,p_payout_period:period,p_commission_from:from,p_commission_to:to});
+ if(error)throw error;
+ pr.preview={data,args:{emp,month,period,from,to}};
+ prRenderPreview();
+}
+function prRenderPreview(){
+ const d=pr.preview.data,box=document.getElementById('prPreview');
+ const lines=table(['Item','Amount'],d.lines.map(l=>[esc(l.description),`<strong class="${Number(l.amount)<0?'red':''}">${Number(l.amount)<0?'−':''}${money(Math.abs(Number(l.amount)))}</strong>`]));
+ const warn=(d.warnings||[]).map(w=>`<div class="note">${esc(w)}</div>`).join('');
+ const blocked=d.blocked_reason?`<div class="note" style="color:#b3303f"><strong>Cannot process:</strong> ${esc(d.blocked_reason)}</div>`:'';
+ box.innerHTML=`<div class="note"><strong>${esc(d.employee_name)}</strong> · ${esc(d.salary_month)} · ${esc(prPeriodTxt(d.payout_period))}<br>
+  Commission period ${esc(d.commission_from)} to ${esc(d.commission_to)}: gross ${money(d.period_gross)} − bills ${money(d.period_bills)} = net ${money(d.period_net)}; rate ${Number(d.commission_rate)}% → commission ${money(d.commission_amount)}</div>
+  ${lines}
+  <div class="summary-row" style="margin-top:8px"><span><strong>Net pay</strong></span><strong class="${Number(d.net_pay)<0?'red':'green'}">${money(d.net_pay)}</strong></div>
+  ${warn}${blocked}
+  ${d.blocked_reason?'':'<div class="toolbar" style="margin-top:10px"><button type="button" id="prProcessBtn">Process payroll…</button></div>'}`;
+ const b=document.getElementById('prProcessBtn');if(b)b.onclick=prConfirm;
+}
+function prConfirm(){
+ const p=pr.preview;if(!p)return;const d=p.data,a=p.args;
+ formModal('Process payroll',
+  `<div class="note"><strong>${esc(d.employee_name)}</strong> · ${esc(d.salary_month)} · ${esc(prPeriodTxt(d.payout_period))}<br>Net pay <strong>${money(d.net_pay)}</strong> (basic ${money(d.basic_pay)} + commission ${money(d.commission_amount)} − deductions ${money(d.deductions_total)}).</div>
+   <div class="field"><label>Paid on</label><input type="date" name="paid" value="${prToday()}" required></div>
+   <div class="field"><label>Notes (optional)</label><input name="notes" maxlength="200"></div>
+   <div class="note">These figures are frozen when you process. The deductions listed are locked to this payroll. This cannot be edited later; corrections are made with adjustments.</div>`,
+  'Process payroll',async fd=>{
+   await prFlushState();
+   const {data,error}=await supabaseClient.rpc('process_payroll_run',{p_employee_ref:a.emp,p_salary_month:a.month,p_payout_period:a.period,p_paid_on:fd.get('paid')||null,p_commission_from:a.from,p_commission_to:a.to,p_notes:fd.get('notes')||null,p_expected_net:Number(d.net_pay)});
+   if(error)throw error;
+   document.getElementById('prFMonth').value=data.salary_month;document.getElementById('prFEmp').value='';prClearPreview();prNotice(`Payroll ${data.reference} processed for ${data.employee_name}: net pay ${money(data.net_pay)}.`);
+   await Promise.all([prLoadStatus(),prLoadRuns()]);
+  });
+}
+async function prList(month,emp){
+ const {data,error}=await supabaseClient.rpc('list_payroll_runs',{p_month:month||null,p_employee_ref:emp||null,p_limit:200,p_offset:0});
+ if(error)throw error;return data||[];
+}
+async function prLoadStatus(){
+ const month=prVal('prMonth')||manilaMonth(),runs=await prList(month,null);
+ const find=(ref,per)=>runs.find(r=>r.employee_ref===ref&&r.payout_period===per&&r.status==='processed');
+ const cell=(ref,per)=>{const r=find(ref,per);return r?`<span class="pill paid">Processed</span><div class="muted" style="font-size:11px">${esc(r.reference)} · ${money(r.final_net_pay)}</div>`:'<span class="pill unpaid">Not processed</span>'};
+ const emps=pr.registry.filter(r=>r.active||runs.some(x=>x.employee_ref===r.employee_ref));
+ document.getElementById('prStatus').innerHTML=table(['Employee','Monthly salary','15th payout','30th payout'],emps.map(r=>[esc(r.name)+(r.active?'':' <span class="pill">inactive</span>'),money(r.monthly_salary),cell(r.employee_ref,'15th'),cell(r.employee_ref,'30th')]));
+}
+async function prLoadRuns(){
+ const month=prVal('prFMonth'),emp=prVal('prFEmp');
+ pr.runs=await prList(month,emp);
+ const sum=k=>pr.runs.reduce((a,r)=>a+Number(r[k]||0),0);
+ document.getElementById('prStats').innerHTML=[
+  stat('Payroll runs',String(pr.runs.length),month?'Salary month '+month:'All months',''),
+  stat('Net pay released',money(sum('final_net_pay')),'After adjustments','green'),
+  stat('Commissions paid',money(sum('commission_amount')),'Frozen at processing','blue'),
+  stat('Deductions applied',money(sum('deductions_total')),'Locked to payroll','amber')
+ ].join('');
+ document.getElementById('prRuns').innerHTML=table(['Reference','Employee','Salary month','Paid on','Basic pay','Commission','Deductions','Net pay','Adjustments','Final net pay','Processed by','Actions'],
+  pr.runs.map(r=>{const adj=Number(r.adjustments_total||0);
+   return [esc(r.reference),esc(r.employee_name),esc(r.salary_month)+' · '+esc(r.payout_period),esc(r.paid_on),money(r.basic_pay),money(r.commission_amount),Number(r.deductions_total)?'−'+money(r.deductions_total):money(0),money(r.net_pay),adj?`<span class="${adj<0?'red':'green'}">${adj<0?'−':'+'}${money(Math.abs(adj))}</span>`:'<span class="muted">—</span>',`<strong>${money(r.final_net_pay)}</strong>`,esc(r.processed_by_name||'—')+`<div class="muted" style="font-size:11px">${manilaTime(r.processed_at)}</div>`,`<div class="actions"><button class="small secondary" onclick="prDetails('${r.id}')">Details</button><button class="small" onclick="prAdjust('${r.id}')">Adjust</button></div>`]}));
+}
+function prInfoModal(title,html){
+ const root=document.getElementById('modalRoot');
+ root.innerHTML=`<div class="modal-backdrop"><div class="modal" style="max-width:640px"><h3>${esc(title)}</h3><div>${html}</div><div class="modal-actions"><button type="button" class="secondary" id="prClose">Close</button></div></div></div>`;
+ root.querySelector('#prClose').onclick=()=>{root.innerHTML=''};
+ root.querySelector('.modal-backdrop').addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))root.innerHTML=''});
+}
+function prDetails(id){
+ const r=pr.runs.find(x=>x.id===id);if(!r)return;
+ const lines=table(['Item','Amount'],(r.lines||[]).map(l=>[esc(l.description),`<strong class="${Number(l.amount)<0?'red':''}">${Number(l.amount)<0?'−':''}${money(Math.abs(Number(l.amount)))}</strong>`]));
+ const adj=(r.adjustments||[]).length?table(['Reference','Amount','Reason','By'],r.adjustments.map(a=>[esc(a.reference),`<strong class="${Number(a.amount)<0?'red':'green'}">${Number(a.amount)<0?'−':'+'}${money(Math.abs(Number(a.amount)))}</strong>`,esc(a.reason),esc(a.created_by_name||'—')])):'<div class="muted">No adjustments.</div>';
+ prInfoModal(r.reference+' · '+r.employee_name,
+  `<div class="note">${esc(r.salary_month)} · ${esc(prPeriodTxt(r.payout_period))} · paid on ${esc(r.paid_on)}<br>Monthly salary at processing ${money(r.monthly_salary)} · commission rate ${Number(r.commission_rate)}%<br>Commission period ${esc(r.commission_from)} to ${esc(r.commission_to)}: gross ${money(r.period_gross)} − bills ${money(r.period_bills)} = net ${money(r.period_net)}${r.notes?'<br>Notes: '+esc(r.notes):''}</div>
+   <h4 style="margin:12px 0 6px">Payslip lines</h4>${lines}
+   <div class="summary-row" style="margin-top:8px"><span><strong>Net pay</strong></span><strong>${money(r.net_pay)}</strong></div>
+   <h4 style="margin:12px 0 6px">Adjustments</h4>${adj}
+   <div class="summary-row" style="margin-top:8px"><span><strong>Final net pay</strong></span><strong class="green">${money(r.final_net_pay)}</strong></div>`);
+}
+function prAdjust(id){
+ const r=pr.runs.find(x=>x.id===id);if(!r)return;
+ formModal('Adjust payroll',
+  `<div class="note"><strong>${esc(r.reference)}</strong> · ${esc(r.employee_name)} · final net pay ${money(r.final_net_pay)}</div>
+   <div class="field"><label>Adjustment amount (₱)</label><input type="number" name="amt" step="0.01" required placeholder="e.g. 250 to add, -100 to reduce"></div>
+   <div class="field"><label>Reason (required)</label><textarea name="why" maxlength="200" required></textarea></div>
+   <div class="note">Positive adds pay, negative reduces pay. The original payroll is never changed; this is added as a separate record.</div>`,
+  'Save adjustment',async fd=>{
+   const {data,error}=await supabaseClient.rpc('add_payroll_adjustment',{p_run_id:id,p_amount:Number(fd.get('amt')),p_reason:fd.get('why')});
+   if(error)throw error;prNotice(`Adjustment ${data.reference} saved for ${r.reference}.`);
+   await Promise.all([prLoadStatus(),prLoadRuns()]);
   });
 }
 
