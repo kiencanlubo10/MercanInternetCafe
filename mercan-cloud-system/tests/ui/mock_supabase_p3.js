@@ -46,6 +46,12 @@
   const rpcs={
     bootstrap_mercanshop:()=>({shop_id:'shop-1',role:ROLE}),
     save_shop_state:a=>{db.revision++;db.state=a.p_state;return db.revision},
+    save_shop_state_p4:a=>{db.revision++;db.state=a.p_state;return db.revision},
+    my_permissions:()=>({role:ROLE,sales:ROLE!=='staff',expenses:ROLE!=='staff',employees:ROLE!=='staff',settings:ROLE!=='staff'}),
+    start_session:()=>'sess-1',touch_session:()=>null,end_session:()=>null,
+    list_team:()=>[{user_id:'u-admin',email:'owner@example.com',role:'admin',active:true,last_seen_at:new Date().toISOString(),online:true,permissions:{sales:true,expenses:true,employees:true,settings:true}},{user_id:'u-staff',email:'cashier01@accounts.mercan.invalid',role:'staff',active:true,last_seen_at:null,online:false,permissions:{sales:false,expenses:false,employees:false,settings:false}}],
+    list_login_history:()=>[{id:1,user_id:'u-staff',email:'cashier01@accounts.mercan.invalid',event:'login',device:'Test browser',created_at:new Date().toISOString()}],
+    set_member_permission:()=>null,revoke_member_sessions:()=>({sessions_ended:1,tokens_removed:true}),set_member_active:()=>null,
     sync_employee_registry:a=>{db.registry=a.p_employees.map(e=>({employee_ref:e.id,name:e.name,monthly_salary:e.salary,commission_rate:e.rate,active:true}));return db.registry.length},
     preview_payroll:a=>{need();return calc(a.p_employee_ref,a.p_salary_month,a.p_payout_period,a.p_commission_from,a.p_commission_to)},
     process_payroll_run:a=>{need();const c=calc(a.p_employee_ref,a.p_salary_month,a.p_payout_period,a.p_commission_from,a.p_commission_to);
