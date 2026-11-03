@@ -14,6 +14,11 @@ button,input,select,textarea{font:inherit}button{cursor:pointer;border:0;border-
 @media(max-width:430px){.stats{grid-template-columns:1fr 1fr}.form-grid,.form-grid.cols-3,.form-grid.cols-2{grid-template-columns:1fr}.topbar h1{font-size:16px}}
 @media print{body{background:#fff}.sidebar,.topbar,.no-print,button{display:none!important}.app{display:block}.content{padding:0;max-width:none}.card{box-shadow:none;border:1px solid #ddd;break-inside:avoid}.table-wrap{overflow:visible}table{min-width:0}th,td{padding:6px;font-size:10px}.page-head{margin-bottom:12px}}
 body.read-only .actions button,body.read-only form button[type="submit"],body.read-only .page-head button{display:none!important}body.read-only input,body.read-only select,body.read-only textarea{pointer-events:none;opacity:.75}body.read-only #page-settings #settingsForm button,body.read-only #page-settings #restoreFile,body.read-only #page-settings .danger{display:none!important}
+
+.pill.rejected{background:#fdeaec;color:#b3303f}.pill.pending{background:#fff3df;color:#98600b}
+.modal textarea,.modal select,.modal input{width:100%}.modal textarea{min-height:64px;resize:vertical;border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+.pager-info{color:var(--muted);font-size:12px}
+@media(max-width:720px){.app>*{min-width:0}}
 </style>
 </head>
 <body>
@@ -39,6 +44,7 @@ body.read-only .actions button,body.read-only form button[type="submit"],body.re
   <button data-page="expenses"><span>▤</span>Bills & Expenses</button>
   <button data-page="employees"><span>♙</span>Employees</button>
   <button data-page="payroll"><span>₱</span>Salary & Payouts</button>
+  <button data-page="advances" id="navAdvances" style="display:none"><span>⇄</span>Advances & Deductions</button>
   <button data-page="reports"><span>▥</span>Reports</button>
   <button data-page="settings"><span>⚙</span>Settings & Backup</button>
  </nav>
@@ -107,6 +113,35 @@ body.read-only .actions button,body.read-only form button[type="submit"],body.re
    </div>
    <div class="grid two" style="margin-top:16px"><div class="card"><h3 class="section-title">Payout period summary</h3><div class="toolbar no-print"><div class="field"><label>Salary month</label><input type="month" id="paySummaryMonth"></div><button class="secondary" onclick="renderPayroll()">Apply</button></div><div id="payrollSummary" style="margin-top:12px"></div></div><div class="card"><h3 class="section-title">Salary payment records</h3><div id="payrollTable"></div></div></div>
   </section>
+  <section id="page-advances" class="page hidden">
+   <div class="page-head"><div><h2>Employee advances & salary deductions</h2><p>Record cash advances and employee expenses, approve them, then deduct them from salary. Deductions are tracked here and are never counted as sales or income.</p></div><button class="no-print" onclick="advRecord()">＋ Record advance / expense</button></div>
+   <div id="advNotice" class="note hidden" style="margin-bottom:12px"></div>
+   <div id="advSetup" class="note hidden" style="margin-bottom:12px"></div>
+   <div class="grid stats" id="advStats"></div>
+   <div class="card" style="margin-top:16px"><h3 class="section-title">Employee financial summary</h3>
+    <div class="toolbar no-print" style="margin-bottom:12px"><div class="field"><label for="advMonth">Salary month</label><input type="month" id="advMonth"></div></div>
+    <div id="advSummary"></div>
+    <div class="note">Remaining balance = approved expenses − deductions applied. Net salary before commission = monthly salary − deductions applied in the selected month; commissions and other earnings are added by the payroll module. Pending and rejected expenses are never deducted.</div>
+   </div>
+   <div class="card" style="margin-top:16px"><h3 class="section-title">Advances & expense records</h3>
+    <div class="toolbar no-print" style="margin-bottom:12px">
+     <div class="field"><label for="advFEmp">Employee</label><select id="advFEmp"><option value="">All employees</option></select></div>
+     <div class="field"><label for="advFStatus">Approval</label><select id="advFStatus"><option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+     <div class="field"><label for="advFFrom">From</label><input type="date" id="advFFrom"></div>
+     <div class="field"><label for="advFTo">To</label><input type="date" id="advFTo"></div>
+     <div class="field"><label for="advFSearch">Search</label><input id="advFSearch" placeholder="Reference or description" maxlength="60"></div>
+    </div>
+    <div id="advExpenses"></div><div id="advExpPager" class="toolbar no-print"></div>
+   </div>
+   <div class="card" style="margin-top:16px"><h3 class="section-title">Deduction history</h3>
+    <div class="toolbar no-print" style="margin-bottom:12px">
+     <div class="field"><label for="advDEmp">Employee</label><select id="advDEmp"><option value="">All employees</option></select></div>
+     <div class="field"><label for="advDMonth">Salary month</label><input type="month" id="advDMonth"></div>
+    </div>
+    <div id="advDeductions"></div><div id="advDedPager" class="toolbar no-print"></div>
+    <div class="note">Every deduction has a reference number and is permanent. A mistake is corrected with a reversal entry (with a reason), never by editing or deleting. Each action is written to the audit log.</div>
+   </div>
+  </section>
   <section id="page-reports" class="page hidden">
    <div class="page-head"><div><h2>Financial reports</h2><p>Filter a daily, weekly, or monthly financial summary and print it.</p></div><button class="no-print" onclick="window.print()">Print report</button></div>
    <div class="card">
@@ -147,7 +182,7 @@ const dateFmt=s=>s?new Date(s+'T00:00:00').toLocaleDateString('en-PH',{year:'num
 const defaultState=()=>({version:1,settings:{shopName:'Mercan Internet Cafe'},categories:[...DEFAULT_CATEGORIES],sales:[],expenses:[],employees:[],payments:[]});
 let state=loadState(), editing={sales:null,expense:null,employee:null,pay:null};
 function loadState(){try{const raw=localStorage.getItem(STORAGE_KEY);if(!raw)return defaultState();const x=JSON.parse(raw);return {...defaultState(),...x,settings:{...defaultState().settings,...x.settings},categories:Array.isArray(x.categories)?x.categories: [...DEFAULT_CATEGORIES],sales:Array.isArray(x.sales)?x.sales:[],expenses:Array.isArray(x.expenses)?x.expenses:[],employees:Array.isArray(x.employees)?x.employees:[],payments:Array.isArray(x.payments)?x.payments:[]}}catch(e){console.error(e);return defaultState()}}
-function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state));updateBrand();queueCloudSave()}
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state));updateBrand();queueCloudSave();queueRegistrySync()}
 let supabaseClient=null, currentShopId=null, currentRole='staff', currentUserId=null, cloudRevision=0, cloudSaveTimer=null, cloudChannel=null, authMode='signin', cloudReady=false;
 function setAuthMessage(message,isError=false){const el=document.getElementById('authMessage');el.textContent=message;el.style.color=isError?'#c43645':'#718096'}
 function setCloudStatus(message){const el=document.getElementById('cloudStatus');if(el)el.textContent=message}
@@ -156,13 +191,13 @@ async function pushCloudState(){cloudSaveTimer=null;if(!cloudReady||!currentShop
 async function initializeCloudSession(session){if(!session){document.getElementById('authGate').style.display='grid';document.getElementById('mainApp').style.display='none';cloudReady=false;return}
  document.getElementById('authGate').style.display='none';document.getElementById('mainApp').style.display='grid';setCloudStatus('Preparing your shop…');
  let {data:boot,error:bootError}=await supabaseClient.rpc('bootstrap_mercanshop');if(bootError)throw bootError;
- currentShopId=boot.shop_id;currentRole=boot.role;currentUserId=session.user.id;document.getElementById('teamAccessCard').style.display=currentRole==='admin'?'block':'none';
+ currentShopId=boot.shop_id;currentRole=boot.role;currentUserId=session.user.id;document.getElementById('teamAccessCard').style.display=currentRole==='admin'?'block':'none';document.getElementById('navAdvances').style.display=currentRole==='admin'?'':'none';
  let {data:row,error}=await supabaseClient.from('shop_state').select('state,revision').eq('shop_id',currentShopId).maybeSingle();if(error)throw error;
  if(row){state={...defaultState(),...row.state,settings:{...defaultState().settings,...(row.state.settings||{})}};cloudRevision=row.revision;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}
  else {state={...defaultState(),...state,settings:{...defaultState().settings,...(state.settings||{})}};cloudRevision=0;}
  cloudReady=true;if(cloudChannel)await supabaseClient.removeChannel(cloudChannel);cloudChannel=supabaseClient.channel('mercan-shop-state-'+currentShopId).on('postgres_changes',{event:'*',schema:'public',table:'shop_state',filter:'shop_id=eq.'+currentShopId},payload=>{if(!payload.new)return;if(payload.new.updated_by===currentUserId){cloudRevision=payload.new.revision;return}if(cloudSaveTimer){setCloudStatus('Another user updated the records. Refresh before making more changes.');return}state={...defaultState(),...payload.new.state,settings:{...defaultState().settings,...(payload.new.state.settings||{})}};cloudRevision=payload.new.revision;localStorage.setItem(STORAGE_KEY,JSON.stringify(state));updateBrand();document.getElementById('shopName').value=state.settings.shopName;renderDashboard();renderSalesTable();renderExpenses();renderEmployees();renderPayroll();renderReport();setCloudStatus('Updated from another user · '+new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}))}).subscribe();updateBrand();document.getElementById('shopName').value=state.settings.shopName;resetSalesForm();resetExpenseForm();resetEmployeeForm();resetPayForm();renderDashboard();renderSalesTable();renderExpenses();renderEmployees();renderPayroll();renderReport();
  setCloudStatus('Cloud connected · '+currentRole);if(currentRole==='staff'){document.body.classList.add('read-only');setCloudStatus('Cloud connected · read-only staff')}else{document.body.classList.remove('read-only')}
- if(!row&&currentRole!=='staff')await pushCloudState();
+ if(!row&&currentRole!=='staff')await pushCloudState();queueRegistrySync();
 }
 async function startAuth(){try{const cfg=window.MERCAN_SUPABASE_CONFIG;if(!cfg?.url||!cfg?.publishableKey||cfg.publishableKey.includes('PASTE_'))throw new Error('Add your Supabase URL and publishable key to config.js first.');supabaseClient=window.supabase.createClient(cfg.url,cfg.publishableKey);const {data:{session},error}=await supabaseClient.auth.getSession();if(error)throw error;await initializeCloudSession(session);supabaseClient.auth.onAuthStateChange((_event,newSession)=>{setTimeout(()=>initializeCloudSession(newSession).catch(e=>{document.getElementById('authGate').style.display='grid';document.getElementById('mainApp').style.display='none';setAuthMessage(e.message,true);console.error(e)}),0)});}catch(e){setAuthMessage(e.message,true);document.getElementById('authGate').style.display='grid';document.getElementById('mainApp').style.display='none';}}
 document.getElementById('signOutBtn').addEventListener('click',async()=>{if(supabaseClient)await supabaseClient.auth.signOut();});
@@ -172,7 +207,7 @@ document.getElementById('authForm').addEventListener('submit',async e=>{e.preven
 
 function updateBrand(){document.getElementById('brandName').textContent=state.settings.shopName||'Computer Shop';document.title=(state.settings.shopName||'Computer Shop')+' | Financial Manager'}
 function modal(title,message,onYes,yesText='Confirm'){const root=document.getElementById('modalRoot');root.innerHTML=`<div class="modal-backdrop"><div class="modal"><h3>${esc(title)}</h3><div>${message}</div><div class="modal-actions"><button class="secondary" id="modalCancel">Cancel</button><button class="danger" id="modalYes">${esc(yesText)}</button></div></div></div>`;root.querySelector('#modalCancel').onclick=()=>root.innerHTML='';root.querySelector('#modalYes').onclick=()=>{root.innerHTML='';onYes()};root.querySelector('.modal-backdrop').addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))root.innerHTML=''})}
-function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.add('hidden'));document.getElementById('page-'+page).classList.remove('hidden');document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));const titles={dashboard:'Dashboard',sales:'Daily Sales',expenses:'Bills & Expenses',employees:'Employees',payroll:'Salary & Payouts',reports:'Financial Reports',settings:'Settings & Backup'};document.getElementById('pageTitle').textContent=titles[page];if(page==='dashboard')renderDashboard();if(page==='sales')renderSalesTable();if(page==='expenses'){renderExpenses();renderCategories()}if(page==='employees')renderEmployees();if(page==='payroll')renderPayroll();if(page==='reports')renderReport();if(page==='settings')document.getElementById('shopName').value=state.settings.shopName}
+function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.add('hidden'));document.getElementById('page-'+page).classList.remove('hidden');document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));const titles={dashboard:'Dashboard',sales:'Daily Sales',expenses:'Bills & Expenses',employees:'Employees',payroll:'Salary & Payouts',advances:'Advances & Deductions',reports:'Financial Reports',settings:'Settings & Backup'};document.getElementById('pageTitle').textContent=titles[page];if(page==='dashboard')renderDashboard();if(page==='sales')renderSalesTable();if(page==='expenses'){renderExpenses();renderCategories()}if(page==='employees')renderEmployees();if(page==='payroll')renderPayroll();if(page==='advances')renderAdvances();if(page==='reports')renderReport();if(page==='settings')document.getElementById('shopName').value=state.settings.shopName}
 document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button[data-page]');if(b)go(b.dataset.page)});
 function inRange(d,from,to){return (!from||d>=from)&&(!to||d<=to)}
 function sums(from,to){const sales=state.sales.filter(x=>inRange(x.date,from,to));const expenses=state.expenses.filter(x=>inRange(x.date,from,to));const morning=sales.reduce((a,x)=>a+Number(x.morning||0),0),night=sales.reduce((a,x)=>a+Number(x.night||0),0),gross=morning+night,bills=expenses.reduce((a,x)=>a+Number(x.amount||0),0),net=gross-bills;const commissions=state.employees.reduce((a,e)=>a+Math.max(0,net)*Number(e.rate||0)/100,0);return {morning,night,gross,bills,net,commissions,balance:net-commissions,sales,expenses}}
@@ -224,6 +259,188 @@ function exportCSV(){const rows=[['Record Type','ID','Date','Name/Category','Mor
 document.getElementById('restoreFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const parsed=JSON.parse(reader.result);if(!parsed||!Array.isArray(parsed.sales)||!Array.isArray(parsed.expenses)||!Array.isArray(parsed.employees)||!Array.isArray(parsed.payments)||!Array.isArray(parsed.categories)||!parsed.settings)throw new Error('Backup structure is not valid.');modal('Restore backup','This will replace all current records with the selected backup. Download a backup of current data first if needed.',()=>{state={...defaultState(),...parsed,settings:{...defaultState().settings,...parsed.settings}};save();e.target.value='';alert('Backup restored successfully.');go('dashboard')},'Restore backup')}catch(err){alert('Could not restore backup: '+err.message);e.target.value=''}};reader.readAsText(file)});
 function clearAllData(){modal('Clear all system data','This permanently deletes all sales, expenses, employees, salary payments, categories and shop settings from this browser. This cannot be undone unless you have a backup.',()=>{state=defaultState();save();resetSalesForm();resetExpenseForm();resetEmployeeForm();resetPayForm();go('dashboard');alert('All system data has been cleared.')},'Clear everything')}
 document.getElementById('paySummaryMonth').value=monthISO();document.getElementById('reportDate').value=todayISO();document.getElementById('salesDate').value=todayISO();document.getElementById('expenseDate').value=todayISO();document.getElementById('payDate').value=todayISO();document.getElementById('payMonth').value=monthISO();document.getElementById('todayLabel').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'short',day:'numeric'});
+/* ===== Employee advances & salary deductions (Priority 2) =====
+   All money rules are enforced by the database functions in
+   supabase/migrations/202611030002_*.sql. This code only calls them. */
+const ADV_CATEGORIES=['Cash Advance','Personal Borrowing','Emergency Advance','Other Employee Expenses'];
+const adv={registry:[],summary:[],reversed:new Set(),expPage:0,dedPage:0,size:10,wired:false};
+const manilaTime=ts=>ts?new Date(ts).toLocaleString('en-PH',{timeZone:'Asia/Manila',year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';
+const manilaMonth=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}).slice(0,7);
+const manilaDay=()=>Number(new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}).slice(8,10));
+const cleanErr=x=>String(x&&x.message||x||'Something went wrong').replace(/^.*?(?:ERROR:\s*)/,'');
+const safeFilter=t=>String(t).replace(/[,()%*\\"']/g,' ').trim();
+
+let registryTimer=null;
+function queueRegistrySync(){if(!cloudReady||!currentShopId||currentRole==='staff')return;clearTimeout(registryTimer);registryTimer=setTimeout(syncEmployeeRegistry,1500)}
+async function syncEmployeeRegistry(){
+ registryTimer=null;if(!cloudReady||currentRole==='staff')return true;
+ const list=state.employees.map(e=>({id:e.id,name:e.name,salary:Number(e.salary)||0,rate:Number(e.rate)||0}));
+ const {error}=await supabaseClient.rpc('sync_employee_registry',{p_employees:list});
+ if(error){console.warn('Employee registry sync failed:',error.message);adv.syncError=error.message;return false}
+ adv.syncError=null;return true;
+}
+
+function formModal(title,body,submitText,onSubmit){
+ const root=document.getElementById('modalRoot');
+ root.innerHTML=`<div class="modal-backdrop"><div class="modal"><h3>${esc(title)}</h3><form id="fmForm" style="display:grid;gap:12px">${body}<div id="fmError" style="color:#c43645;font-size:12px;min-height:16px"></div><div class="modal-actions"><button type="button" class="secondary" id="fmCancel">Cancel</button><button type="submit" id="fmSubmit">${esc(submitText)}</button></div></form></div></div>`;
+ const close=()=>{root.innerHTML=''};
+ root.querySelector('#fmCancel').onclick=close;
+ root.querySelector('#fmForm').addEventListener('submit',async e=>{
+  e.preventDefault();const btn=root.querySelector('#fmSubmit'),err=root.querySelector('#fmError');
+  btn.disabled=true;err.textContent='';
+  try{await onSubmit(new FormData(e.target));close()}catch(x){err.textContent=cleanErr(x);btn.disabled=false}
+ });
+ return root;
+}
+function advNotice(msg){const el=document.getElementById('advNotice');el.textContent=msg;el.classList.toggle('hidden',!msg)}
+
+function advWire(){
+ if(adv.wired)return;adv.wired=true;
+ const reload=(reset)=>()=>{if(reset==='exp')adv.expPage=0;advLoadExpenses().catch(advFail)};
+ ['advFEmp','advFStatus','advFFrom','advFTo'].forEach(id=>document.getElementById(id).addEventListener('change',reload('exp')));
+ let t=null;document.getElementById('advFSearch').addEventListener('input',()=>{clearTimeout(t);t=setTimeout(reload('exp'),300)});
+ document.getElementById('advMonth').addEventListener('change',()=>advLoadSummary().catch(advFail));
+ ['advDEmp','advDMonth'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{adv.dedPage=0;advLoadDeductions().catch(advFail)}));
+}
+function advFail(e){
+ const m=cleanErr(e),missing=/does not exist|schema cache|could not find|not find the function/i.test(m);
+ const box=document.getElementById('advSetup');
+ box.innerHTML=missing?'<strong>Setup needed:</strong> run <code>supabase/migrations/202611030002_employee_expenses_deductions.sql</code> in the Supabase SQL Editor, then reload this page.':'<strong>Could not load:</strong> '+esc(m);
+ box.classList.remove('hidden');console.error(e);
+}
+
+async function renderAdvances(){
+ advWire();
+ if(currentRole!=='admin'){advFail(new Error('Only a shop administrator can open this page.'));return}
+ const m=document.getElementById('advMonth');if(!m.value)m.value=manilaMonth();
+ document.getElementById('advSetup').classList.add('hidden');advNotice('');
+ try{
+  clearTimeout(registryTimer);
+  await syncEmployeeRegistry();
+  await advLoadRegistry();
+  await Promise.all([advLoadSummary(),advLoadExpenses(),advLoadDeductions()]);
+ }catch(e){advFail(e)}
+}
+async function advLoadRegistry(){
+ const {data,error}=await supabaseClient.from('employee_registry').select('employee_ref,name,active,monthly_salary').order('name');
+ if(error)throw error;adv.registry=data||[];
+ const opts='<option value="">All employees</option>'+adv.registry.map(r=>`<option value="${esc(r.employee_ref)}">${esc(r.name)}${r.active?'':' (inactive)'}</option>`).join('');
+ ['advFEmp','advDEmp'].forEach(id=>{const el=document.getElementById(id),v=el.value;el.innerHTML=opts;el.value=v});
+}
+async function advLoadSummary(){
+ const month=document.getElementById('advMonth').value||manilaMonth();
+ const {data,error}=await supabaseClient.rpc('get_employee_financial_summary',{p_month:month});
+ if(error)throw error;adv.summary=data||[];
+ const sum=k=>adv.summary.reduce((a,x)=>a+Number(x[k]||0),0);
+ document.getElementById('advStats').innerHTML=[
+  stat('Pending approval',money(sum('pending_total')),'Awaiting an administrator decision','amber'),
+  stat('Outstanding deduction balance',money(sum('remaining_balance')),'Approved, not yet deducted','red'),
+  stat('Deducted in '+month,money(sum('deducted_in_month')),'Applied to this salary month','blue'),
+  stat('Total approved to date',money(sum('approved_total')),'All employees','')
+ ].join('');
+ document.getElementById('advSummary').innerHTML=table(['Employee','Monthly salary','Cash advances','Approved expenses','Deducted so far','Remaining balance','Deducted this month','Net before commission'],
+  adv.summary.map(x=>[esc(x.name)+(x.active?'':' <span class="pill">inactive</span>'),money(x.monthly_salary),money(x.cash_advances),money(x.approved_total),money(x.deducted_total),`<strong class="${Number(x.remaining_balance)>0?'red':''}">${money(x.remaining_balance)}</strong>`,money(x.deducted_in_month),`<strong>${money(x.net_before_commission)}</strong>`]));
+}
+function advExpenseQuery(){
+ let q=supabaseClient.from('employee_expenses').select('*',{count:'exact'}).order('occurred_at',{ascending:false});
+ const emp=document.getElementById('advFEmp').value,st=document.getElementById('advFStatus').value,f=document.getElementById('advFFrom').value,t=document.getElementById('advFTo').value,txt=safeFilter(document.getElementById('advFSearch').value);
+ if(emp)q=q.eq('employee_ref',emp);if(st)q=q.eq('approval_status',st);
+ if(f)q=q.gte('occurred_at',f+'T00:00:00+08:00');if(t)q=q.lte('occurred_at',t+'T23:59:59.999+08:00');
+ if(txt)q=q.or(`description.ilike.%${txt}%,reference.ilike.%${txt}%`);
+ return q;
+}
+function advPager(elId,page,total,onPage){
+ const pages=Math.max(1,Math.ceil(total/adv.size)),el=document.getElementById(elId);
+ el.innerHTML=`<span class="pager-info">${total} record${total===1?'':'s'} · page ${page+1} of ${pages}</span><span style="flex:1"></span><button class="small secondary" ${page<=0?'disabled':''} data-dir="-1">Previous</button><button class="small secondary" ${page+1>=pages?'disabled':''} data-dir="1">Next</button>`;
+ el.querySelectorAll('button').forEach(b=>b.onclick=()=>onPage(page+Number(b.dataset.dir)));
+}
+async function advLoadExpenses(){
+ const from=adv.expPage*adv.size;
+ const {data,error,count}=await advExpenseQuery().range(from,from+adv.size-1);
+ if(error)throw error;
+ const apPill=s=>`<span class="pill ${s==='approved'?'paid':s==='rejected'?'rejected':'pending'}">${esc(s)}</span>`;
+ const dedPill=x=>x.approval_status!=='approved'?'<span class="muted">—</span>':`<span class="pill ${x.deduction_status==='full'?'paid':x.deduction_status==='partial'?'unpaid':''}">${esc(x.deduction_status)}</span><div class="muted" style="font-size:11px">Deducted ${money(x.deducted_amount)} · left ${money(Number(x.amount)-Number(x.deducted_amount))}</div>`;
+ document.getElementById('advExpenses').innerHTML=table(['Reference','Date & time','Employee','Category','Description','Amount','Approval','Deduction','Recorded by','Actions'],
+  (data||[]).map(x=>{
+   const left=Number(x.amount)-Number(x.deducted_amount);let acts='';
+   if(x.approval_status==='pending')acts=`<button class="small" onclick="advDecide('${x.id}','approved')">Approve</button><button class="small danger" onclick="advDecide('${x.id}','rejected')">Reject</button>`;
+   else if(x.approval_status==='approved'&&left>0)acts=`<button class="small" onclick="advDeduct('${x.id}')">Deduct</button>`;
+   const by=x.decided_by_name?`<div class="muted" style="font-size:11px">${x.approval_status} by ${esc(x.decided_by_name)}</div>`:'';
+   return [esc(x.reference),manilaTime(x.occurred_at),esc(x.employee_name),esc(x.category),esc(x.description)+(x.decision_note?`<div class="muted" style="font-size:11px">Note: ${esc(x.decision_note)}</div>`:''),`<strong>${money(x.amount)}</strong>`,apPill(x.approval_status)+by,dedPill(x),esc(x.recorded_by_name||'—'),`<div class="actions">${acts}</div>`];
+  }));
+ advPager('advExpPager',adv.expPage,count||0,p=>{adv.expPage=p;advLoadExpenses().catch(advFail)});
+}
+async function advLoadDeductions(){
+ const from=adv.dedPage*adv.size;
+ let q=supabaseClient.from('employee_deductions').select('*,employee_expenses(reference,employee_name)',{count:'exact'}).order('created_at',{ascending:false});
+ const emp=document.getElementById('advDEmp').value,mo=document.getElementById('advDMonth').value;
+ if(emp)q=q.eq('employee_ref',emp);if(mo)q=q.eq('salary_month',mo);
+ const [{data,error,count},rev]=await Promise.all([q.range(from,from+adv.size-1),supabaseClient.from('employee_deductions').select('reverses_id').not('reverses_id','is',null)]);
+ if(error)throw error;if(rev.error)throw rev.error;
+ adv.reversed=new Set((rev.data||[]).map(r=>r.reverses_id));
+ document.getElementById('advDeductions').innerHTML=table(['Reference','Date & time','Employee','Expense','Type','Amount','Salary period','Processed by','Note','Actions'],
+  (data||[]).map(d=>{
+   const isRev=d.kind==='reversal',done=adv.reversed.has(d.id),locked=!!d.payroll_run_id;
+   const act=isRev?'<span class="muted">—</span>':done?'<span class="pill">reversed</span>':locked?'<span class="pill paid">in payroll</span>':`<button class="small secondary" onclick="advReverse('${d.id}')">Reverse</button>`;
+   return [esc(d.reference),manilaTime(d.created_at),esc(d.employee_expenses?.employee_name||''),esc(d.employee_expenses?.reference||''),`<span class="pill ${isRev?'rejected':'paid'}">${isRev?'reversal':'deduction'}</span>`,`<strong class="${isRev?'red':''}">${isRev?'−':''}${money(d.amount)}</strong>`,esc(d.salary_month)+' · '+esc(d.payout_period),esc(d.created_by_name||'—'),esc(d.note||''),`<div class="actions">${act}</div>`];
+  }));
+ advPager('advDedPager',adv.dedPage,count||0,p=>{adv.dedPage=p;advLoadDeductions().catch(advFail)});
+}
+const advRefresh=()=>Promise.all([advLoadSummary(),advLoadExpenses(),advLoadDeductions()]).catch(advFail);
+
+function advRecord(){
+ const active=adv.registry.filter(r=>r.active);
+ if(!active.length){alert('Add at least one employee on the Employees page first.');return}
+ const opts=active.map(r=>`<option value="${esc(r.employee_ref)}">${esc(r.name)}</option>`).join('');
+ formModal('Record advance / expense',
+  `<div class="field"><label>Employee</label><select name="emp" required>${opts}</select></div>
+   <div class="field"><label>Category</label><select name="cat" required>${ADV_CATEGORIES.map(c=>`<option>${esc(c)}</option>`).join('')}</select></div>
+   <div class="field"><label>Amount (₱)</label><input name="amt" type="number" min="0.01" step=".01" required></div>
+   <div class="field"><label>Description / reason</label><textarea name="desc" maxlength="300" required placeholder="e.g. Cash advance for medical expenses"></textarea></div>
+   <div class="field"><label>Date & time (Manila time — leave blank for now)</label><input name="when" type="datetime-local"></div>
+   <div class="note">The expense starts as <strong>pending</strong>. It can only be deducted from salary after it is approved.</div>`,
+  'Record expense',async fd=>{
+   const when=fd.get('when');
+   const {error}=await supabaseClient.rpc('create_employee_expense',{p_employee_ref:fd.get('emp'),p_category:fd.get('cat'),p_amount:Number(fd.get('amt')),p_description:fd.get('desc'),p_occurred_at:when?new Date(when+':00+08:00').toISOString():null});
+   if(error)throw error;advNotice('Expense recorded as pending approval.');await advRefresh();
+  });
+}
+async function advGetExpense(id){const {data,error}=await supabaseClient.from('employee_expenses').select('*').eq('id',id).single();if(error)throw error;return data}
+async function advDecide(id,decision){
+ let x;try{x=await advGetExpense(id)}catch(e){return advFail(e)}
+ const head=`<div class="note"><strong>${esc(x.reference)}</strong> · ${esc(x.employee_name)} · ${esc(x.category)} · <strong>${money(x.amount)}</strong><br>${esc(x.description)}</div>`;
+ const approve=decision==='approved';
+ formModal(approve?'Approve expense':'Reject expense',head+(approve
+  ?`<div class="field"><label>Employee's written authorization to deduct (required)</label><textarea name="auth" maxlength="300" required placeholder="e.g. Signed deduction authorization form dated 2026-11-03"></textarea></div><div class="field"><label>Note (optional)</label><input name="note" maxlength="200"></div><div class="note">Philippine labor rules allow salary deductions only when authorized. Keep the signed authorization on file.</div>`
+  :`<div class="field"><label>Reason for rejection (required)</label><textarea name="note" maxlength="200" required></textarea></div>`),
+  approve?'Approve':'Reject',async fd=>{
+   const {error}=await supabaseClient.rpc('decide_employee_expense',{p_expense_id:id,p_decision:decision,p_note:fd.get('note')||null,p_authorization:approve?fd.get('auth'):null});
+   if(error)throw error;advNotice(`Expense ${x.reference} ${decision}.`);await advRefresh();
+  });
+}
+async function advDeduct(id){
+ let x;try{x=await advGetExpense(id)}catch(e){return advFail(e)}
+ const left=Number(x.amount)-Number(x.deducted_amount);
+ formModal('Apply salary deduction',
+  `<div class="note"><strong>${esc(x.reference)}</strong> · ${esc(x.employee_name)} · ${esc(x.category)}<br>Approved ${money(x.amount)} · already deducted ${money(x.deducted_amount)} · <strong>remaining ${money(left)}</strong></div>
+   <div class="field"><label>Amount to deduct now (₱) — partial or full</label><input name="amt" type="number" min="0.01" max="${left.toFixed(2)}" step=".01" value="${left.toFixed(2)}" required></div>
+   <div class="form-grid cols-2"><div class="field"><label>Salary month</label><input name="month" type="month" value="${manilaMonth()}" required></div>
+   <div class="field"><label>Payout</label><select name="period"><option value="15th" ${manilaDay()<=15?'selected':''}>15th payout</option><option value="30th" ${manilaDay()>15?'selected':''}>30th payout</option></select></div></div>
+   <div class="field"><label>Note (optional)</label><input name="note" maxlength="200"></div>`,
+  'Apply deduction',async fd=>{
+   const {data,error}=await supabaseClient.rpc('apply_employee_deduction',{p_expense_id:id,p_amount:Number(fd.get('amt')),p_salary_month:fd.get('month'),p_payout_period:fd.get('period'),p_note:fd.get('note')||null});
+   if(error)throw error;
+   advNotice(`Deduction ${data.reference} applied.`+(data.warning?' Warning: '+data.warning:''));await advRefresh();
+  });
+}
+function advReverse(id){
+ formModal('Reverse deduction','<div class="note">This adds a reversal entry and restores the expense balance. The original record stays in the history.</div><div class="field"><label>Reason (required)</label><textarea name="why" maxlength="200" required></textarea></div>',
+  'Reverse deduction',async fd=>{
+   const {data,error}=await supabaseClient.rpc('reverse_employee_deduction',{p_deduction_id:id,p_reason:fd.get('why')});
+   if(error)throw error;advNotice(`Deduction reversed (${data.reference}).`);await advRefresh();
+  });
+}
+
 updateBrand();resetSalesForm();resetExpenseForm();resetEmployeeForm();resetPayForm();renderDashboard();startAuth();
 </script>
 </body>
