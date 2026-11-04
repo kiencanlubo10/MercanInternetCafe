@@ -419,8 +419,9 @@ async function advLoadExpenses(){
    const left=Number(x.amount)-Number(x.deducted_amount);let acts='';
    if(x.approval_status==='pending')acts=`<button class="small" onclick="advDecide('${x.id}','approved')">Approve</button><button class="small danger" onclick="advDecide('${x.id}','rejected')">Reject</button>`;
    else if(x.approval_status==='approved'&&left>0)acts=`<button class="small" onclick="advDeduct('${x.id}')">Deduct</button>`;
+   if(x.approval_status!=='rejected'&&Number(x.deducted_amount)===0)acts+=`<button class="small secondary" onclick="advEdit('${x.id}')">Edit</button>`;
    const by=x.decided_by_name?`<div class="muted" style="font-size:11px">${x.approval_status} by ${esc(x.decided_by_name)}</div>`:'';
-   return [esc(x.reference),manilaTime(x.occurred_at),esc(x.employee_name),esc(x.category),esc(x.description)+(x.decision_note?`<div class="muted" style="font-size:11px">Note: ${esc(x.decision_note)}</div>`:''),`<strong>${money(x.amount)}</strong>`,apPill(x.approval_status)+by,dedPill(x),esc(x.recorded_by_name||'—'),`<div class="actions">${acts}</div>`];
+   return [esc(x.reference),manilaTime(x.occurred_at),esc(x.employee_name),esc(x.category),esc(x.description)+(x.decision_note?`<div class="muted" style="font-size:11px">Note: ${esc(x.decision_note)}</div>`:'')+(x.edited_at?`<div class="muted" style="font-size:11px">Edited ${manilaTime(x.edited_at)} by ${esc(x.edited_by_name||'')}</div>`:''),`<strong>${money(x.amount)}</strong>`,apPill(x.approval_status)+by,dedPill(x),esc(x.recorded_by_name||'—'),`<div class="actions">${acts}</div>`];
   }));
  advPager('advExpPager',adv.expPage,count||0,p=>{adv.expPage=p;advLoadExpenses().catch(advFail)});
 }
@@ -470,6 +471,23 @@ async function advDecide(id,decision){
   approve?'Approve':'Reject',async fd=>{
    const {error}=await supabaseClient.rpc('decide_employee_expense',{p_expense_id:id,p_decision:decision,p_note:fd.get('note')||null,p_authorization:approve?fd.get('auth'):null});
    if(error)throw error;advNotice(`Expense ${x.reference} ${decision}.`);await advRefresh();
+  });
+}
+async function advEdit(id){
+ let x;try{x=await advGetExpense(id)}catch(e){return advFail(e)}
+ const orig=new Date(new Date(x.occurred_at).getTime()+8*3600e3).toISOString().slice(0,16);
+ const cats=['Cash Advance','Personal Borrowing','Emergency Advance','Other Employee Expenses'];
+ formModal('Edit expense record',
+  `<div class="note"><strong>${esc(x.reference)}</strong> · ${esc(x.employee_name)} (employee cannot be changed)${x.approval_status==='approved'?'<br>Approved record: changing the <strong>amount</strong> sends it back to Pending for re-approval. Other changes keep the approval.':''}</div>
+   <div class="form-grid cols-2"><div class="field"><label>Category</label><select name="cat">${cats.map(c=>`<option ${c===x.category?'selected':''}>${c}</option>`).join('')}</select></div>
+   <div class="field"><label>Amount (₱)</label><input name="amt" type="number" min="0.01" step=".01" value="${Number(x.amount).toFixed(2)}" required></div></div>
+   <div class="field"><label>Description</label><input name="desc" maxlength="300" value="${esc(x.description)}" required></div>
+   <div class="field"><label>Date & time</label><input name="when" type="datetime-local" value="${orig}"></div>
+   <div class="field"><label>Reason for this edit (required)</label><textarea name="why" maxlength="200" required></textarea></div>`,
+  'Save changes',async fd=>{
+   const when=fd.get('when');
+   const {data,error}=await supabaseClient.rpc('edit_employee_expense',{p_expense_id:id,p_category:fd.get('cat'),p_amount:Number(fd.get('amt')),p_description:fd.get('desc'),p_occurred_at:when&&when!==orig?new Date(when+':00+08:00').toISOString():null,p_reason:fd.get('why')});
+   if(error)throw error;advNotice(`Expense ${x.reference} updated.`+(data.approval_reset?' The amount changed, so it is back to Pending for approval.':''));await advRefresh();
   });
 }
 async function advDeduct(id){
