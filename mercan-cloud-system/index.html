@@ -420,8 +420,9 @@ async function advLoadExpenses(){
    if(x.approval_status==='pending')acts=`<button class="small" onclick="advDecide('${x.id}','approved')">Approve</button><button class="small danger" onclick="advDecide('${x.id}','rejected')">Reject</button>`;
    else if(x.approval_status==='approved'&&left>0)acts=`<button class="small" onclick="advDeduct('${x.id}')">Deduct</button>`;
    if(x.approval_status!=='rejected'&&Number(x.deducted_amount)===0)acts+=`<button class="small secondary" onclick="advEdit('${x.id}')">Edit</button>`;
-   const by=x.decided_by_name?`<div class="muted" style="font-size:11px">${x.approval_status} by ${esc(x.decided_by_name)}</div>`:'';
-   return [esc(x.reference),manilaTime(x.occurred_at),esc(x.employee_name),esc(x.category),esc(x.description)+(x.decision_note?`<div class="muted" style="font-size:11px">Note: ${esc(x.decision_note)}</div>`:'')+(x.edited_at?`<div class="muted" style="font-size:11px">Edited ${manilaTime(x.edited_at)} by ${esc(x.edited_by_name||'')}</div>`:''),`<strong>${money(x.amount)}</strong>`,apPill(x.approval_status)+by,dedPill(x),esc(x.recorded_by_name||'—'),`<div class="actions">${acts}</div>`];
+   if(x.approval_status!=='rejected')acts+=`<button class="small secondary" onclick="advMove('${x.id}')">Move</button><button class="small danger" onclick="advVoid('${x.id}')">Void</button>`;
+   const by=x.decided_by_name?`<div class="muted" style="font-size:11px">${x.voided_at?'voided':x.approval_status} by ${esc(x.decided_by_name)}</div>`:'';
+   return [esc(x.reference),manilaTime(x.occurred_at),esc(x.employee_name),esc(x.category),esc(x.description)+(x.decision_note?`<div class="muted" style="font-size:11px">Note: ${esc(x.decision_note)}</div>`:'')+(x.edited_at?`<div class="muted" style="font-size:11px">Edited ${manilaTime(x.edited_at)} by ${esc(x.edited_by_name||'')}</div>`:''),`<strong>${money(x.amount)}</strong>`,(x.voided_at?'<span class="pill rejected">voided</span>':apPill(x.approval_status))+by,dedPill(x),esc(x.recorded_by_name||'—'),`<div class="actions">${acts}</div>`];
   }));
  advPager('advExpPager',adv.expPage,count||0,p=>{adv.expPage=p;advLoadExpenses().catch(advFail)});
 }
@@ -488,6 +489,28 @@ async function advEdit(id){
    const when=fd.get('when');
    const {data,error}=await supabaseClient.rpc('edit_employee_expense',{p_expense_id:id,p_category:fd.get('cat'),p_amount:Number(fd.get('amt')),p_description:fd.get('desc'),p_occurred_at:when&&when!==orig?new Date(when+':00+08:00').toISOString():null,p_reason:fd.get('why')});
    if(error)throw error;advNotice(`Expense ${x.reference} updated.`+(data.approval_reset?' The amount changed, so it is back to Pending for approval.':''));await advRefresh();
+  });
+}
+async function advMove(id){
+ let x;try{x=await advGetExpense(id)}catch(e){return advFail(e)}
+ const others=adv.registry.filter(r=>r.active&&r.employee_ref!==x.employee_ref);
+ formModal('Move to another employee',
+  `<div class="note"><strong>${esc(x.reference)}</strong> · ${esc(x.category)} · <strong>${money(x.amount)}</strong> · now under <strong>${esc(x.employee_name)}</strong>${Number(x.deducted_amount)>0?`<br>Deducted so far: <strong>${money(x.deducted_amount)}</strong>. These deductions will be <strong>reversed</strong> (reversal entries are added, nothing is erased).`:''}<br>The record goes back to <strong>Pending</strong>. Get the new employee's written authorization, approve it, then deduct again.</div>
+   <div class="field"><label>Correct employee</label><select name="emp" required><option value="">Choose…</option>${others.map(r=>`<option value="${esc(r.employee_ref)}">${esc(r.name)}</option>`).join('')}</select></div>
+   <div class="field"><label>Reason (required)</label><textarea name="why" maxlength="200" required placeholder="e.g. Entered under the wrong employee"></textarea></div>`,
+  'Move record',async fd=>{
+   const {data,error}=await supabaseClient.rpc('move_employee_expense',{p_expense_id:id,p_new_employee_ref:fd.get('emp'),p_reason:fd.get('why')});
+   if(error)throw error;advNotice(`${x.reference} moved to ${data.employee_name}.`+(data.deductions_reversed?` ${data.deductions_reversed} deduction(s) reversed.`:'')+' It is Pending: approve it again before deducting.');await advRefresh();
+  });
+}
+async function advVoid(id){
+ let x;try{x=await advGetExpense(id)}catch(e){return advFail(e)}
+ formModal('Void expense record',
+  `<div class="note"><strong>${esc(x.reference)}</strong> · ${esc(x.employee_name)} · ${esc(x.category)} · <strong>${money(x.amount)}</strong><br>Voiding works like deleting: the record stops counting toward any balance${Number(x.deducted_amount)>0?`, and its <strong>${money(x.deducted_amount)}</strong> of deductions are reversed`:''}. It stays in the list marked <strong>voided</strong> so payroll and the audit trail can still be explained. This cannot be undone.</div>
+   <div class="field"><label>Reason (required)</label><textarea name="why" maxlength="200" required placeholder="e.g. Duplicate entry"></textarea></div>`,
+  'Void record',async fd=>{
+   const {data,error}=await supabaseClient.rpc('void_employee_expense',{p_expense_id:id,p_reason:fd.get('why')});
+   if(error)throw error;advNotice(`${x.reference} voided.`+(data.deductions_reversed?` ${data.deductions_reversed} deduction(s) reversed.`:''));await advRefresh();
   });
 }
 async function advDeduct(id){
